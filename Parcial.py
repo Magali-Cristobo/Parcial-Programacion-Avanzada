@@ -37,6 +37,7 @@ class BinaryTree:
             else:
                 return current
 
+
     def search(self, value): 
         current = self.root
         while current is not None:
@@ -100,67 +101,25 @@ def generarDatos(size: int, ordered: bool = False) -> BinaryTree:
 
 # 6
 
-class MapNode:
-    def __init__(self, key: Any, value: Any):
-        self.key = key
-        self.value = value
-        self.left: Optional["MapNode"] = None
-        self.right: Optional["MapNode"] = None
-
-
-class BinarySearchTreeMap:
-    def __init__(self):
-        self.root: Optional[MapNode] = None
-
-    def insert(self, key: Any, value: Any) -> MapNode:
-        if self.root is None:
-            self.root = MapNode(key, value)
-            return self.root
-
-        current = self.root
-        while True:
-            if key < current.key:
-                if current.left is None:
-                    current.left = MapNode(key, value)
-                    return current.left
-                current = current.left
-            elif key > current.key:
-                if current.right is None:
-                    current.right = MapNode(key, value)
-                    return current.right
-                current = current.right
-            else:
-                current.value = value
-                return current
-
-    def search(self, key: Any) -> Any:
-        current = self.root
-        while current is not None:
-            if key == current.key:
-                return current.value
-            if key < current.key:
-                current = current.left
-            else:
-                current = current.right
+def build_balanced_tree(sorted_values: List[Any]) -> Optional[BinaryTree]:
+    if len(sorted_values) == 0:
         return None
 
-    @classmethod
-    def from_sorted_items(cls, items: List[Tuple[Any, Any]]) -> "BinarySearchTreeMap":
-        tree = cls()
+    middle = len(sorted_values) // 2
+    tree = BinaryTree(sorted_values[middle])
 
-        def build(low: int, high: int) -> Optional[MapNode]:
-            if low > high:
-                return None
+    def insert_middle(low: int, high: int) -> None:
+        if low > high:
+            return
 
-            middle = (low + high) // 2
-            key, value = items[middle]
-            node = MapNode(key, value)
-            node.left = build(low, middle - 1)
-            node.right = build(middle + 1, high)
-            return node
+        current_middle = (low + high) // 2
+        tree.insert(sorted_values[current_middle])
+        insert_middle(low, current_middle - 1)
+        insert_middle(current_middle + 1, high)
 
-        tree.root = build(0, len(items) - 1)
-        return tree
+    insert_middle(0, middle - 1)
+    insert_middle(middle + 1, len(sorted_values) - 1)
+    return tree
 
 
 def parse_int(value: str) -> Optional[int]:
@@ -191,7 +150,7 @@ def load_arbolado_dataset(url: str, max_rows: Optional[int] = None) -> List[Dict
     return dataset_rows
 
 
-def build_species_trees(dataset_rows: List[Dict[str, str]]) -> Dict[str, BinarySearchTreeMap]:
+def build_species_trees(dataset_rows: List[Dict[str, str]]) -> Tuple[Dict[str, BinaryTree], Dict[str, Dict[int, Dict[str, str]]]]:
     grouped_rows: Dict[str, List[Tuple[int, Dict[str, str]]]] = defaultdict(list)
 
     for row in dataset_rows:
@@ -202,17 +161,22 @@ def build_species_trees(dataset_rows: List[Dict[str, str]]) -> Dict[str, BinaryS
         species = normalize_species(row.get("nombre_cientifico", ""))
         grouped_rows[species].append((nro_registro, row))
 
-    species_trees: Dict[str, BinarySearchTreeMap] = {}
+    species_trees: Dict[str, BinaryTree] = {}
+    species_records: Dict[str, Dict[int, Dict[str, str]]] = {}
     for species, records in grouped_rows.items():
         records.sort(key=lambda item: item[0])
-        species_trees[species] = BinarySearchTreeMap.from_sorted_items(records)
+        nro_values = [nro_registro for nro_registro, _ in records]
+        species_tree = build_balanced_tree(nro_values)
+        if species_tree is not None:
+            species_trees[species] = species_tree
+            species_records[species] = {nro_registro: row for nro_registro, row in records}
 
-    return species_trees
+    return species_trees, species_records
 
 
-def build_master_species_tree(species_trees: Dict[str, BinarySearchTreeMap]) -> BinarySearchTreeMap:
-    sorted_species_trees = sorted(species_trees.items(), key=lambda item: item[0])
-    return BinarySearchTreeMap.from_sorted_items(sorted_species_trees)
+def build_master_species_tree(species_trees: Dict[str, BinaryTree]) -> Optional[BinaryTree]:
+    species_values = sorted(species_trees.keys())
+    return build_balanced_tree(species_values)
 
 
 def search_in_raw_dataset(dataset_rows: List[Dict[str, str]], species: str, nro_registro: int) -> Optional[Dict[str, str]]:
@@ -224,18 +188,36 @@ def search_in_raw_dataset(dataset_rows: List[Dict[str, str]], species: str, nro_
     return None
 
 
-def search_in_species_tree(species_trees: Dict[str, BinarySearchTreeMap], species: str, nro_registro: int) -> Optional[Dict[str, str]]:
+def search_in_species_tree(
+    species_trees: Dict[str, BinaryTree],
+    species_records: Dict[str, Dict[int, Dict[str, str]]],
+    species: str,
+    nro_registro: int,
+) -> Optional[Dict[str, str]]:
     species_tree = species_trees.get(species)
     if species_tree is None:
         return None
-    return species_tree.search(nro_registro)
 
-
-def search_in_master_tree(master_tree: BinarySearchTreeMap, species: str, nro_registro: int) -> Optional[Dict[str, str]]:
-    species_tree = master_tree.search(species)
-    if species_tree is None:
+    result_node = species_tree.search(nro_registro)
+    if result_node is None:
         return None
-    return species_tree.search(nro_registro)
+    return species_records.get(species, {}).get(result_node.value)
+
+
+def search_in_master_tree(
+    master_tree: Optional[BinaryTree],
+    species_trees: Dict[str, BinaryTree],
+    species_records: Dict[str, Dict[int, Dict[str, str]]],
+    species: str,
+    nro_registro: int,
+) -> Optional[Dict[str, str]]:
+    if master_tree is None:
+        return None
+
+    species_node = master_tree.search(species)
+    if species_node is None:
+        return None
+    return search_in_species_tree(species_trees, species_records, species, nro_registro)
 
 
 def benchmark_lookup(lookup_fn: Callable[[], Any], repetitions: int) -> Tuple[Any, float]:
@@ -310,7 +292,7 @@ def run_punto_6(max_rows: Optional[int] = None, repetitions: int = 20) -> None:
     load_time = time.perf_counter() - load_start
 
     trees_start = time.perf_counter()
-    species_trees = build_species_trees(dataset_rows)
+    species_trees, species_records = build_species_trees(dataset_rows)
     species_trees_time = time.perf_counter() - trees_start
 
     master_start = time.perf_counter()
@@ -330,8 +312,8 @@ def run_punto_6(max_rows: Optional[int] = None, repetitions: int = 20) -> None:
         return
 
     for index, (species, nro_registro) in enumerate(search_targets, start=1):
-        species_lookup = lambda: search_in_species_tree(species_trees, species, nro_registro)
-        master_lookup = lambda: search_in_master_tree(master_tree, species, nro_registro)
+        species_lookup = lambda: search_in_species_tree(species_trees, species_records, species, nro_registro)
+        master_lookup = lambda: search_in_master_tree(master_tree, species_trees, species_records, species, nro_registro)
         raw_lookup = lambda: search_in_raw_dataset(dataset_rows, species, nro_registro)
 
         species_result, species_time = benchmark_lookup(species_lookup, repetitions)
@@ -363,7 +345,7 @@ def run_punto_6(max_rows: Optional[int] = None, repetitions: int = 20) -> None:
 def main() -> None:
     # Punto 6
     # max_rows=None usa el dataset completo.
-    # Si queres una corrida mas rapida para probar, usa por ejemplo max_rows=50000.
+    # Para una corrida mas rapida se puede cambiar el valor del parametro max_rows, max_rows=50000.
     run_punto_6(max_rows=None, repetitions=20)
 
 if __name__ == "__main__":
